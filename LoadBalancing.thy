@@ -2,12 +2,20 @@ theory LoadBalancing imports Complex_Main Groups_Big Groups_List
 begin
 
 (* For each machine, we keep a set of jobs assigned to it (represented as indices into the job list)
-   together with the sum of their execution times.*)
+   together with the sum of their execution times. The algorithm assumes that the jobs are
+   always placed on the machine with the smallest load. We implement this assumption by sorting
+   the list of machines by their load before placing jobs. The head of the sorted list will
+   therefore have the smallest load. *)
 
 definition add_job :: "nat \<Rightarrow> nat \<Rightarrow> (nat set \<times> nat) list \<Rightarrow> (nat set \<times> nat) list" where
   "add_job n t ms \<equiv> map_prod (insert n) (plus t) (hd ms)#(tl ms)"
 
-(* The first element of the job list is scheduled last.*)
+(* This job scheduling function takes a list of job execution times and uses it
+   to mutate the schedule. The proofs about optimal upper bounds will assume that the function
+   is called with an empty schedule, i.e., 'replicate m ({}, 0)',
+   where 'm' stands for the number of machines available.
+
+   The first element of the job list is scheduled last.*)
 
 fun balance :: "nat list \<Rightarrow> (nat set \<times> nat) list \<Rightarrow> (nat set \<times> nat) list" where
 "balance []     = id" |
@@ -49,7 +57,7 @@ lemma sum_list_map_collapse:
    See comments for \<open>Sorting functions\<close> in List.thy. *)
 
 lemma sum_list_sort_key_snd:
-  fixes m xs
+  fixes xs::"(nat set \<times> nat) list"
   assumes len: "length xs > 0"
   shows "sum_list (map snd (sort_key snd xs)) = sum_list (map snd xs)"
   sorry
@@ -95,24 +103,24 @@ theorem greedy_balance_optimal:               (* Theorem 11.3 in KT *)
   fixes m ms ts
   assumes
     mtwo: "m > 1" and
+    mrep: "ms = replicate m ({}, 0)" and
     topt_avg_t: "m * Topt \<ge> sum_list ts" and  (* Statement 11.1 in KT *)
     topt_max_t: "\<forall>t. t \<in> set ts \<Longrightarrow> Topt \<ge> t" (* Statement 11.2 in KT *)
-  shows "\<forall>ts T. length ts > 0 \<and> T \<in> set (map snd (balance ts (replicate m ({}, 0)))) \<Longrightarrow> T \<le> 2 * Topt"
-    (is "\<forall>ts T. length ts > 0 \<and> T \<in> set ?B \<Longrightarrow> T \<le> 2 * Topt")
+  shows "\<forall>T. T \<in> set (map snd (balance ts ms)) \<Longrightarrow> T \<le> 2 * Topt"
+    (is "\<forall>T. T \<in> set ?B \<Longrightarrow> T \<le> 2 * Topt")
 proof -
   have  "\<forall>T. T \<in> set ?B \<Longrightarrow> m * (T - hd ts) \<le> sum_list ?B"
     using mult_min_le_sumlist member_le_sum_list by blast
   hence "\<forall>T. T \<in> set ?B \<Longrightarrow> m * (T - hd ts) \<le> sum_list ts"
-    using mtwo by (simp add:loads_eq_times)
+    using mtwo mrep by (simp add:loads_eq_times)
   hence "\<forall>T. T \<in> set ?B \<Longrightarrow> m * (T - hd ts) \<le> m * Topt"
-    using mtwo topt_avg_t order_trans by blast
+    using mtwo mrep topt_avg_t order_trans by blast
   hence "\<forall>T. T \<in> set ?B \<Longrightarrow> T - hd ts \<le> Topt"
     using mtwo by auto
-  hence "\<forall>T t. T \<in> set ?B \<and> t \<in> set ts \<Longrightarrow> T - hd ts + t \<le> 2 * Topt"
+  hence "\<forall>T. T \<in> set ?B \<Longrightarrow> T - hd ts + t \<le> 2 * Topt"
     using topt_max_t le_imp_less_Suc member_le_sum_list by blast
-  thus ?thesis by try
-  (* thus  "\<forall>T. T \<in> set ?B \<Longrightarrow> T \<le> 2 * Topt"
-    using le_imp_less_Suc member_le_sum_list by blast *)
+  thus  "\<forall>T. T \<in> set ?B \<Longrightarrow> T \<le> 2 * Topt"
+    using le_imp_less_Suc member_le_sum_list by blast
 qed
 
 theorem sorted_balance_optimal:                   (* Theorem 11.5 in KT *)
