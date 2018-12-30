@@ -1,4 +1,4 @@
-theory LoadBalancing imports Complex_Main Groups_Big Groups_List
+theory LoadBalancing imports Complex_Main Groups_Big Groups_List "HOL-Library.Multiset"
 begin
 
 (* For each machine, we keep a set of jobs assigned to it (represented as indices into the job list)
@@ -51,16 +51,18 @@ lemma sum_list_map_collapse:
   shows "f (hd xs) + sum_list (map f (tl xs)) = sum_list (map f xs)"
   using len by (induction xs) auto
 
-(* The following lemma requires proof that the sorting function is a permutation
-   which seems not to be possible yet in HOL/Main.
-
-   See comments for \<open>Sorting functions\<close> in List.thy. *)
-
 lemma sum_list_sort_key_snd:
   fixes xs::"(nat set \<times> nat) list"
   assumes len: "length xs > 0"
   shows "sum_list (map snd (sort_key snd xs)) = sum_list (map snd xs)"
-  sorry
+proof -
+  have "sum_list (map snd (sort_key snd xs)) = sum_mset (mset (map snd (sort_key snd xs)))"
+    using sum_mset_sum_list by metis
+  also have "\<dots> = sum_mset (mset (map snd xs))" by simp
+  also have "\<dots> = sum_list (map snd xs)"
+    using sum_mset_sum_list by metis
+  finally show ?thesis .
+qed
 
 theorem loads_eq_times:
   fixes m ts
