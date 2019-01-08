@@ -73,19 +73,6 @@ proof -
   finally show ?thesis .
 qed
 
-text \<open>We translate 'max' operators with universal quantification.
-      The translations are equivalent to original statements because maximum elements
-      only appear in inequalities.
-      If all elements of a set are not greater than 'n', it includes the maximum element as well.
-      If the maximum element is not greater than 'n', it is true for all other elements as well.
-
-      In particular, if all machine loads in a schedule computed by 'balance' are smaller
-      than all machine loads in all possible schedules by some constant factor, it includes
-      the makespan computed by 'balance' and the optimal makespan.\<close>
-
-text \<open>Otherwise, we follow the textbook proof by Kleinberg and Tardos, mostly.
-      For simplicity, we avoid reasoning about reals.\<close>
-
 lemma mult_max_ge_sumlist:
   assumes "x = Max (set xs)"
   shows "length xs * x \<ge> sum_list xs"
@@ -113,7 +100,7 @@ qed
 text \<open>The following lemmas encode the lower bounds for ANY makespan,
       including the optimal one.\<close>
 
-lemma premakespan: (* second paragraph the proof of Theorem 11.3 in KT *)
+lemma premakespan: (* second paragraph of the proof of Theorem 11.3 in KT *)
   assumes "ms = replicate m {#}" and "\<forall> t. t \<in> set ts \<longrightarrow> t > 0"
   shows "makespan (balance ts ms) - hd ts = Min (set (map sum_mset (balance ts ms)))"
   sorry
@@ -139,6 +126,16 @@ proof -
     using \<open>t \<in> set ts \<longrightarrow> m \<in> set ms \<and> t \<in># m\<close> order_trans by fastforce
   then show ?thesis .
 qed
+
+text \<open>If the makespan computed by 'balance' is smaller
+      than the makespan of any schedule by some constant factor,
+      it includes the optimal makespan.
+
+      Therefore, we do not need to specify explicitly that the optimal makespan
+      is the minimal one of all possible makespans.
+
+      Otherwise, we follow the textbook proof by Kleinberg and Tardos, mostly.
+      For simplicity, we avoid reasoning about reals.\<close>
 
 theorem greedy_balance_optimal:               (* Theorem 11.3 in KT *)
   assumes
