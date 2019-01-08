@@ -1,4 +1,4 @@
-theory LoadBalancing imports Complex_Main Groups_Big Groups_List "HOL-Library.Multiset"
+theory LoadBalancing imports Complex_Main Groups_List "HOL-Library.Multiset"
 begin
 
 text \<open>For each machine, we keep a set of assigned jobs represented as their execution times.
@@ -8,6 +8,9 @@ text \<open>For each machine, we keep a set of assigned jobs represented as thei
 
 definition schedule :: "nat list \<Rightarrow> (nat multiset) list \<Rightarrow> bool" where
   "schedule ts ms \<equiv> \<Union># (mset ms) = mset ts"
+
+definition makespan :: "(nat multiset) list \<Rightarrow> nat" where
+  "makespan ms \<equiv> Max (set (map sum_mset ms))"
 
 definition add_job :: "nat \<Rightarrow> (nat multiset) list \<Rightarrow> (nat multiset) list" where
   "add_job n ms \<equiv>  add_mset n (hd ms)#(tl ms)"
@@ -27,57 +30,48 @@ text \<open>Test cases\<close>
 (* Figure 11.1 in KT*)
 value \<open>balance (rev [2,3,4,6,2,2]) (replicate 3 {#})\<close>
 
-theorem length_ms_constant:
-  fixes m ts
-  assumes mpos: "m > 0"
-  shows "length (balance ts (replicate m {#})) = m"
-  using mpos add_job_def by (induction rule:balance.induct) auto
+theorem balance_length:
+  assumes "length ms > 0"
+  shows "length ms = length (balance ts ms)"
+(* Suc_pred fails to apply in this:
+  using assms add_job_def by (induction ts) simp_all *)
+proof (induction ts)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons t ts)
+  then show ?case using assms add_job_def by simp
+qed
 
-lemma sum_list_map_collapse:
-  fixes f xs
-  assumes len: "length xs > 0"
-  shows "f (hd xs) + sum_list (map f (tl xs)) = sum_list (map f xs)"
-  using len by (induction xs) auto
+lemma mset_add_job:
+  assumes "length ms > 0"
+  shows "\<Union># (mset (add_job n ms)) = add_mset n (\<Union># (mset ms))"
+  using assms add_job_def by (induction ms) simp_all
 
-lemma sum_list_sort_key_snd:
-  fixes xs::"(nat set \<times> nat) list"
-  assumes len: "length xs > 0"
-  shows "sum_list (map snd (sort_key snd xs)) = sum_list (map snd xs)"
-proof -
-  have "sum_list (map snd (sort_key snd xs)) = sum_mset (mset (map snd (sort_key snd xs)))"
-    using sum_mset_sum_list by metis
-  also have "\<dots> = sum_mset (mset (map snd xs))" by simp
-  also have "\<dots> = sum_list (map snd xs)"
-    using sum_mset_sum_list by metis
-  finally show ?thesis .
+theorem schedule_balance:
+  assumes "m > 0"
+  shows "schedule ts (balance ts (replicate m {#}))"
+proof (induction ts)
+  case Nil
+  then show ?case using schedule_def by simp
+next
+  case (Cons a ts)
+  have "length (balance ts (replicate m {#})) > 0" using assms balance_length by simp
+  thus ?case using schedule_def mset_add_job
+    by (metis (no_types, lifting) balance.simps(2) length_sort Cons mset.simps(2) mset_sort o_def)
 qed
 
 theorem loads_eq_times:
-  fixes m ts
-  assumes mpos:"m > 1"
-  shows "sum_list (map sum_mset (balance ts (replicate m {#}))) = sum_list ts"
-proof (induction ts rule:balance.induct)
-  case 1
-  then show ?case by simp
-next
-  case (2 t ts)
-  have "length (sort_key snd (balance ts (replicate m ({}, 0)))) > 0"
-    using mpos by (simp add:length_ms_constant)
-  then show ?case using 2 add_job_def by (simp add: sum_list_map_collapse sum_list_sort_key_snd)
-qed
-
-lemma mult_min_le_sumlist:
-  fixes m xs
+  fixes ms::"(nat multiset) list"
   assumes
-    mtwo: "m > 1" and
-    mrep: "length xs = m"
-  shows "\<exists>x. \<forall>y. y \<in># mset xs \<longrightarrow> x \<le> y \<and> m * x \<le> sum_list xs"
-  using member_le_sum_list not_le by fastforce
-  
-text \<open>The following definition uses sets internally and would result in a counterexample:
-        topt_avg_t: "Topt \<ge> (1/m)*(\<Sum>i<m. ts ! i)"
-      Therefore, all jobs that have identical execution times would collapse into a single job.
-      We use sums over lists to avoid this issue.\<close>
+    msch: "schedule ts ms"
+  shows "sum_list (map sum_mset ms) = sum_list ts"
+proof -
+  have "sum_list (map sum_mset ms) = sum_mset (\<Union># (mset ms))" by (induction ms) simp_all
+  also have "\<dots> = sum_mset (mset ts)" using msch schedule_def by simp
+  also have "\<dots> = sum_list ts" by (simp add: sum_mset_sum_list)
+  finally show ?thesis .
+qed
 
 text \<open>We translate 'max' operators with universal quantification.
       The translations are equivalent to original statements because maximum elements
@@ -92,79 +86,124 @@ text \<open>We translate 'max' operators with universal quantification.
 text \<open>Otherwise, we follow the textbook proof by Kleinberg and Tardos, mostly.
       For simplicity, we avoid reasoning about reals.\<close>
 
+lemma mult_max_ge_sumlist:
+  assumes "x = Max (set xs)"
+  shows "length xs * x \<ge> sum_list xs"
+proof -
+  have "\<forall>y. y \<in> set xs \<longrightarrow> id y \<le> (\<lambda>_. x) y" using assms by simp
+  hence "sum_list (replicate (length xs) x) \<ge> sum_list xs"
+    using sum_list_mono
+    by (metis id_apply list.map_id0 map_replicate_const)
+  moreover have "length xs * x = sum_list (replicate (length xs) x)" by (induction xs) simp_all
+  ultimately show ?thesis by simp
+qed
+
+lemma mult_min_le_sumlist:
+  assumes "x = Min (set xs)"
+  shows "length xs * x \<le> sum_list xs"
+proof -
+  have "\<forall>y. y \<in> set xs \<longrightarrow> id y \<ge> (\<lambda>_. x) y" using assms by simp
+  hence "sum_list (replicate (length xs) x) \<le> sum_list xs"
+    using sum_list_mono
+    by (metis id_apply list.map_id0 map_replicate_const)
+  moreover have "length xs * x = sum_list (replicate (length xs) x)" by (induction xs) simp_all
+  ultimately show ?thesis by simp
+qed
+
+text \<open>The following lemmas encode the lower bounds for ANY makespan,
+      including the optimal one.\<close>
+
+lemma premakespan: (* second paragraph the proof of Theorem 11.3 in KT *)
+  assumes "ms = replicate m {#}" and "\<forall> t. t \<in> set ts \<longrightarrow> t > 0"
+  shows "makespan (balance ts ms) - hd ts = Min (set (map sum_mset (balance ts ms)))"
+  sorry
+
 lemma makespan_ge_avg: (* Lemma 11.1 in KT *)
   fixes ms::"(nat multiset) list"
-  assumes
-    mopt: "schedule ts ms" and
-    topt: "makespan = Max (set (map sum_mset ms))"
-  shows "length ms * Topt \<ge> sum_list ts"
-  using member_le_sum_list not_le sorry
+  assumes "schedule ts ms" and "length ms > 0"
+  shows "length ms * makespan ms \<ge> sum_list ts"
+  using assms makespan_def loads_eq_times mult_max_ge_sumlist
+  by (metis length_map)
 
 lemma makespan_ge_t: (* Lemma 11.2 in KT *)
   fixes ms::"(nat multiset) list"
-  assumes
-    mopt: "schedule ts ms"
-  shows "t \<in> set ts \<longrightarrow> Max (set (map sum_mset ms)) \<ge> t"
+  assumes msch: "schedule ts ms"
+  shows "t \<in> set ts \<longrightarrow> makespan ms \<ge> t"
 proof -
   have "t \<in> set ts \<longrightarrow> (\<exists>m. m \<in> set ms \<and> t \<in># m)"
-    using mopt by (metis in_Union_mset_iff schedule_def set_mset_mset)
+    using msch by (metis in_Union_mset_iff schedule_def set_mset_mset)
   then obtain m where "t \<in> set ts \<longrightarrow> (m \<in> set ms \<and> t \<in># m)" by auto
   hence "t \<in> set ts \<longrightarrow> t \<le> sum_mset m" using sum_mset.remove by fastforce
-  moreover have "m \<in> set ms \<longrightarrow> Max (set (map sum_mset ms)) \<ge> sum_mset m"by simp
-  ultimately have "t \<in> set ts \<longrightarrow> Max (set (map sum_mset ms)) \<ge> t"
+  moreover have "m \<in> set ms \<longrightarrow> makespan ms \<ge> sum_mset m" using makespan_def by simp
+  ultimately have "t \<in> set ts \<longrightarrow> makespan ms \<ge> t"
     using \<open>t \<in> set ts \<longrightarrow> m \<in> set ms \<and> t \<in># m\<close> order_trans by fastforce
   then show ?thesis .
 qed
 
 theorem greedy_balance_optimal:               (* Theorem 11.3 in KT *)
-  fixes m ms ts mbs mos
   assumes
-    mtwo: "m > 1" and
+    mpos: "m > 0" and
     mrep: "ms = replicate m {#}" and
-    ts_len: "length ts > 0" and
+    tpos: "\<forall> t. t \<in> set ts \<longrightarrow> t > 0" and
+    tspos: "length ts > 0" and
     mopt: "schedule ts mos \<and> length mos = m" and
-    mmsp: "mbs = balance ts ms" and
-    topt: "Topt = Max (set (map sum_mset mos))" and
-    tmsp: "T = Max (set (map sum_mset (balance ts ms)))"
+    topt: "Topt = makespan mos" and
+    tmsp: "T = makespan (balance ts ms)"
   shows "T \<le> 2 * Topt"
 proof -
-  have  "m * (T - hd ts) \<le> sum_list (map sum_mset (balance ts ms))"
-    using mult_min_le_sumlist topt tmsp sorry
+  have "length (balance ts ms) = m" using mpos mrep balance_length by simp
+  moreover have "T - hd ts = Min (set (map sum_mset (balance ts ms)))"
+    using mrep tmsp tpos premakespan by simp
+  ultimately have  "m * (T - hd ts) \<le> sum_list (map sum_mset (balance ts ms))"
+    using mult_min_le_sumlist mpos by fastforce
   hence "m * (T - hd ts) \<le> sum_list ts"
-    using mtwo mrep by (simp add: loads_eq_times)
+    using mpos mrep schedule_balance loads_eq_times by metis
   hence "m * (T - hd ts) \<le> m * Topt"
-    using mtwo ts_len mopt topt makespan_avg order_trans by blast
+    using mopt topt makespan_ge_avg order_trans by fastforce
   hence "T - hd ts \<le> Topt"
-    using mtwo by simp
+    using mpos by simp
   hence "T - hd ts + hd ts \<le> 2 * Topt"
-    using mtwo ts_len mopt topt makespan_ge_t ts_len by sorry
+    using tspos mopt topt makespan_ge_t
+    by (metis add_mono length_greater_0_conv list.set_sel(1) mult_2)
   thus  ?thesis by linarith
 qed
 
-theorem sorted_balance_optimal:                   (* Theorem 11.5 in KT *)
-  fixes m ms ts
+lemma makespan_ge_2t: (* Lemma 11.4 in KT*)
+  fixes ms::"(nat multiset) list"
   assumes
-    mtwo: "m > 1" and
+    msch: "schedule ts ms" and
+    tlen: "length ts > length ms"
+  shows "makespan ms \<ge> 2 * ts ! (Suc (length ms))"
+  sorry
+
+theorem sorted_balance_optimal:                   (* Theorem 11.5 in KT *)
+  assumes
+    mpos: "m > 0" and
     mrep: "ms = replicate m {#}" and
-    topt_avg_t: "m * Topt \<ge> sum_list ts" and      (* Statement 11.1 in KT *)
-    topt_max_t: "\<forall>t. t \<in> set ts \<Longrightarrow> Topt \<ge> t" and (* Statement 11.2 in KT *)
+    tpos: "\<forall> t. t \<in> set ts \<longrightarrow> t > 0" and
+    tspos: "length ts > 0" and
+    mopt: "schedule ts mos \<and> length mos = m" and
+    topt: "Topt = makespan mos" and
+    tmsp: "T = makespan (balance ts ms)" and
     (* Additional assumptions allow us to prove a tighter upper bound: *)
-    tlen: "length ts > length ms" and
-    tssort: "sorted_wrt (op \<ge>) ts" and
-    topt_dbl_t: "Topt \<ge> 2 * ts ! (Suc m)"         (* Lemma 11.4 *)
-  shows "\<forall>T. T \<in> set (map sum_mset (balance ts ms)) \<Longrightarrow> 2 * T \<le> 3 * Topt"
-    (is "\<forall>T. T \<in> set ?B \<Longrightarrow> 2 * T \<le> 3 * Topt")
+    tslen: "length ts > length ms" and
+    tssorted: "i < j \<longrightarrow> ts ! i \<ge> ts ! j"
+  shows "2 * T \<le> 3 * Topt"
 proof -
-  have  "\<forall>T. T \<in> set ?B \<Longrightarrow> m * (T - hd ts) \<le> sum_list ?B"
-    using member_le_sum_list by blast
-  hence "\<forall>T. T \<in> set ?B \<Longrightarrow> m * (T - hd ts) \<le> sum_list ts"
-    using mtwo mrep by (simp add:loads_eq_times)
-  hence "\<forall>T. T \<in> set ?B \<Longrightarrow> m * (T - hd ts) \<le> m * Topt"
-    using mtwo mrep topt_avg_t order_trans by blast
-  hence "\<forall>T. T \<in> set ?B \<Longrightarrow> T - hd ts \<le> Topt"
-    using mtwo by auto
-  hence "\<forall>T. T \<in> set ?B \<Longrightarrow> 2 * (T - hd ts) + 2 * hd ts \<le> 3 * Topt"
-    using topt_dbl_t le_imp_less_Suc member_le_sum_list by blast
-  thus "\<forall>T. T \<in> set ?B \<Longrightarrow> 2 * T \<le> 3 * Topt"
-    using le_imp_less_Suc member_le_sum_list by blast
+  have "length (balance ts ms) = m" using mpos mrep balance_length by simp
+  moreover have "T - hd ts = Min (set (map sum_mset (balance ts ms)))"
+    using mrep tmsp tpos premakespan by simp
+  ultimately have  "m * (T - hd ts) \<le> sum_list (map sum_mset (balance ts ms))"
+    using mult_min_le_sumlist mpos by fastforce
+  hence "m * (T - hd ts) \<le> sum_list ts"
+    using mpos mrep schedule_balance loads_eq_times by metis
+  hence "m * (T - hd ts) \<le> m * Topt"
+    using mopt topt makespan_ge_avg order_trans by fastforce
+  hence "2 * T - 2 * hd ts \<le> 2 * Topt"
+    using mpos by simp
+  hence "2 * T - 2 * hd ts + 2 * ts ! (Suc m) \<le> 3 * Topt"
+    using mpos mopt topt tspos tslen makespan_ge_2t order_trans sorry
+  moreover have "ts ! 0 \<ge> ts ! (Suc m)"
+    using tspos tssorted sorry
+  ultimately show ?thesis using tspos sorry
 qed
