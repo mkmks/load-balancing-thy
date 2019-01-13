@@ -177,6 +177,22 @@ lemma sum_mset_mult_size:
 lemma size_Union_mset: "size (\<Union># (mset xs)) = sum_list (map size xs)"
   by (induction xs) simp_all
 
+lemma sum_mset_subset_eq:
+  fixes M N :: "('a :: ordered_cancel_comm_monoid_diff) multiset"
+  shows "M \<subseteq># N \<Longrightarrow> sum_mset M \<le> sum_mset N"
+  by (metis le_iff_add mset_subset_eq_exists_conv sum_mset.union)
+
+lemma sum_mset_plus:
+  fixes x y :: nat
+  shows "sum_mset (mset [x, y]) = x + y"
+  by simp
+
+lemma pair_in_set:
+  assumes "x \<noteq> y" and "x \<in># A" and "y \<in># A"
+  shows "mset [x, y] \<subseteq># A"
+  using assms by (metis insert_DiffM insert_noteq_member mset.simps(1) mset.simps(2)
+      mset_subset_eq_add_mset_cancel single_subset_iff)
+
 section \<open>Time bounds\<close>
 
 text \<open>If the makespan computed by 'balance' is smaller
@@ -248,7 +264,7 @@ theorem greedy_balance_optimal: (* Theorem 11.3 in KT *)
     mos_def: "schedule ts mos \<and> length mos = m" and
     topt:    "Topt = makespan mos" and
     T_def:   "T = makespan (balance ts ms)" and
-    j_def:   "T = makespan (balance vs ms)"
+    j_def:   "T = hd vs + premakespan (balance (tl vs) ms)"
   shows "T \<le> 2 * Topt"
 proof -
   have "hd vs \<in> set ts" using ts_def by simp
@@ -262,48 +278,29 @@ subsection \<open>Sorted-Balance\<close>
 text \<open>Note that 'balance' schedules jobs starting from the end of the job list.
       Its head is scheduled last. Therefore, it must be sorted in the _increasing_ order.\<close>
 
-lemma holy_pigeons: (* perhaps, one should consider using the 'pigeonhole' lemma *)
-  assumes
-    msch: "schedule ts ms" and
-    ms_le_ts: "length ms < length ts"
-  shows "\<exists>m. m \<in> set ms \<and> size m \<ge> 2"
-proof -    
-  have 1: "sum_list (map size ms) = size (\<Union># (mset ms))" by (simp add: size_Union_mset)
-  moreover have 2: "\<dots> = length ts"
-    using schedule_def msch by auto
-  moreover have "Max (set (map size ms)) \<ge> 2" using 1 2 ms_le_ts
-    by (metis One_nat_def leD le_less_linear le_zero_eq length_map less_2_cases
-        mult.right_neutral mult_max_ge_sum_list mult_not_zero not_less0)
-  ultimately have "\<exists>m. m \<in> size ` set ms \<and> m \<ge> 2" using ms_le_ts
-    by (metis List.finite_set Max_in image_set not_le set_empty sum_list_simps(1) zero_le)
-  thus ?thesis by auto
-qed
-
 lemma makespan_ge_2t: (* Lemma 11.4 in KT*)
   fixes ms::"(nat multiset) list"
   assumes
     tpos: "\<forall>t. t \<in> set ts \<longrightarrow> t > 0" and
     msch: "schedule ts ms" and
-    ms_le_ts: "length ms < length ts" and
-    ts_sorted: "sorted ts"
-  shows "t \<in> set (take (length ts - length ms) ts) \<longrightarrow> makespan ms \<ge> 2 * t"
-    (is "t \<in> set (take ?tsms ts) \<longrightarrow> makespan ms \<ge> 2 * t")
+    ms_le_ts: "ts = qs@rs \<and> length qs > 0 \<and> length rs = length ms" and
+    ts_sorted: "sorted ts" and
+    opt_greedy: "\<forall>m. m \<in> set ms \<longrightarrow> (\<exists>u. u \<in> set rs \<and> u \<in># m)"
+  shows "t \<in> set qs \<longrightarrow> makespan ms \<ge> 2 * t"
 proof -
-  (* have "\<exists>m. m \<in> set ms \<and> size m \<ge> 2" using msch ms_le_ts holy_pigeons by simp
-  then obtain m where msize: "m \<in> set ms \<and> size m \<ge> 2" by auto *)
-  have "t \<in> set (take ?tsms ts) \<longrightarrow> (\<exists>m. m \<in> set ms \<and> t \<in># m \<and> size m \<ge> 2)"
-    using schedule_def msch ms_le_ts holy_pigeons
-    sorry
-  then obtain m where t_in_m: "t \<in> set (take ?tsms ts) \<longrightarrow> (m \<in> set ms \<and> t \<in># m)" by auto
-  have "\<exists>u. u \<in> set (drop ?tsms ts) \<and> u \<in># m" sorry
-  then obtain u where u_in_m: "u \<in> set (drop ?tsms ts) \<and> u \<in># m" by auto
-  have "\<forall>t. t \<in># m \<longrightarrow> t > 0" sorry
-  hence "t \<in> set (take ?tsms ts) \<longrightarrow> t + u \<le> sum_mset m" sorry
-  moreover have "t \<in> set (take ?tsms ts) \<and> u \<in> set (drop ?tsms ts) \<longrightarrow> t \<le> u"
-    using ts_sorted sorted_append by fastforce
-  ultimately have "t \<in> set (take ?tsms ts) \<longrightarrow> 2 * t \<le> sum_mset m" using u_in_m by linarith
-  moreover have "m \<in> set ms \<longrightarrow> makespan ms \<ge> sum_mset m" by (simp add: makespan_def)
-  ultimately show ?thesis using order_trans t_in_m by auto
+  have "t \<in> set qs \<longrightarrow> (\<exists>m. m \<in> set ms \<and> t \<in># m)"
+    using schedule_def msch  ms_le_ts
+    by (metis (no_types, lifting) Un_iff in_Union_mset_iff set_append set_mset_mset)
+  then obtain m where t_in_m: "t \<in> set qs \<longrightarrow> (m \<in> set ms \<and> t \<in># m)" by auto
+  obtain u where u_in_m: "m \<in> set ms \<longrightarrow> u \<in> set rs \<and> u \<in># m" using opt_greedy by auto
+  have "t \<noteq> u" sorry
+  hence "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> mset [t, u] \<subseteq># m" by (meson pair_in_set t_in_m u_in_m)
+  hence "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> sum_mset (mset [t, u])\<le> sum_mset m" 
+    using sum_mset_subset_eq by fastforce
+  moreover have "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> t \<le> u"
+    using ts_sorted ms_le_ts sorted_append u_in_m by auto
+  moreover have "m \<in> set ms \<longrightarrow> makespan ms \<ge> sum_mset m" using makespan_def by simp
+  ultimately show ?thesis using ms_le_ts t_in_m u_in_m by auto
 qed
 
 theorem sorted_balance_optimal: (* Theorem 11.5 in KT *)
@@ -314,20 +311,17 @@ theorem sorted_balance_optimal: (* Theorem 11.5 in KT *)
     mos_def:  "schedule ts mos \<and> length mos = m" and
     topt:    "Topt = makespan mos" and
     T_def:   "T = makespan (balance ts ms)" and
-    j_def:   "T = makespan (balance vs ms)" and
+    j_def:   "T = hd vs + premakespan (balance (tl vs) ms)" and
     (* Additional assumptions allow us to prove a tighter upper bound: *)
-    ms_le_ts: "ts = qs@rs \<and> length rs = Suc m" and
-    ts_sorted: "sorted ts"
+    ms_le_ts: "ts = qs@rs \<and> length qs > 0 \<and> length rs = m" and
+    ts_sorted: "sorted ts" and
+    opt_greedy: "\<forall>m. m \<in> set mos \<longrightarrow> (\<exists>u. u \<in> set rs \<and> u \<in># m)"
   shows "2 * T \<le> 3 * Topt"
 proof -
-  have "length ms = length mos" using mos_def mrep by simp
-  moreover have "length mos < length ts" using ms_le_ts calculation by (simp add: mos_def)
-  moreover have suc_m_in_set: "hd rs \<in> set (take (length ts - length ms) ts)"
-    using mos_def ms_le_ts  sorry
-  ultimately have "2 * T - 2 * hd vs + 2 * hd rs \<le> 3 * Topt"
-    using balance_optimal_common makespan_ge_2t assms
-    by (metis (no_types, lifting) add.commute add_mono mult_2 mult_Suc
-        numeral_2_eq_2 numeral_3_eq_3 right_diff_distrib')
-  moreover have "hd vs \<le> hd rs" using ts_sorted sorry
-  ultimately show ?thesis using add_increasing2 by linarith
+  have "hd vs \<in> set qs" using mos_def ms_le_ts sorry
+  moreover have "2 * T - 2 * hd vs \<le> 2 * Topt" using balance_optimal_common assms
+    by (metis nat_mult_le_cancel_disj right_diff_distrib')
+  ultimately have "2 * T - 2 * hd vs + 2 * hd vs \<le> 3 * Topt" using makespan_ge_2t assms
+    by (metis add.commute add_mono mult_Suc numeral_2_eq_2 numeral_3_eq_3)
+  thus ?thesis using add_increasing2 by linarith
 qed
