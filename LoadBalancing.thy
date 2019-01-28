@@ -187,11 +187,20 @@ lemma sum_mset_plus:
   shows "sum_mset (mset [x, y]) = x + y"
   by simp
 
-lemma pair_in_set:
+lemma pair_in_mset:
   assumes "x \<noteq> y" and "x \<in># A" and "y \<in># A"
   shows "mset [x, y] \<subseteq># A"
   using assms by (metis insert_DiffM insert_noteq_member mset.simps(1) mset.simps(2)
       mset_subset_eq_add_mset_cancel single_subset_iff)
+
+lemma sum_mset_replicate:
+  assumes "replicate_mset n x \<subseteq># A"
+  shows "n * x \<le> sum_mset A"
+  using assms sum_mset_subset_eq by fastforce
+
+lemma mset_replicate:
+  shows "mset (replicate n x) = replicate_mset n x"
+  by (induction n) simp_all
 
 section \<open>Time bounds\<close>
 
@@ -212,6 +221,31 @@ lemma makespan_ge_avg: (* Lemma 11.1 in KT *)
   using assms makespan_def loads_eq_times
   by (metis length_map mult_max_ge_sum_list)
 
+text \<open>The textbook proof employs reasoning about array indices which is cumbersome to formalize.
+      Encoding the index 'j' used in the textbook proof to denote the last job placed on a machine
+      that attains the makespan is particularly difficult.
+
+      We keep ourselves to reasoning about lists instead.
+      To that end, we define the list of jobs 'ts' as a concatenation of two lists 'us' and 'vs',
+      where the second list is non-empty and contains jobs 1..j.
+      The length of 'vs' is equal to 'j', and we encode this idea with the 'j_def' assumption.
+      The head of 'vs' corresponds to 't_j' in the textbook proof.
+
+      By observation made in the first paragraph of the textbook proof of Theorem 11.3,
+      a makespan is attained after placing a job on a machine with the _smallest_ load.
+      We define that load as 'premakespan'.
+
+      Thus, 'j_def' should be understood as follows: the last job contributing to the makespan
+      is the head element of some suffix of the job list for which a makespan is computed
+      that is equal to the makespan for the unmodified job list.
+
+      The elements of 'us' are placed on other machines and do not contribute to makespan.
+      Lemma 'premakespan_balance_drop' contains the proof of this fact.
+
+      It is possible, indeed, to rewrite the proof without defining 'ts' as a concatenation
+      of lists by using 'take' and 'drop' as needed, but such a proof would turn out _less_ readable
+      and more difficult to maintain.\<close>
+
 lemma balance_optimal_common:
   fixes ms::"(nat multiset) list"
   assumes
@@ -227,8 +261,8 @@ proof -
   have "premakespan (balance (tl vs) ms) \<le> premakespan (balance vs ms)"
     using premakespan_mono ts_def mpos mrep
     by (metis in_set_conv_decomp length_replicate less_irrefl list.exhaust_sel list.size(3))
-  then have "T - hd vs \<le> premakespan (balance ts ms)"
-    using premakespan_balance_drop ts_def j_def mpos mrep
+  hence "T - hd vs \<le> premakespan (balance ts ms)"
+    using premakespan_balance_drop ts_def T_def j_def mpos mrep
     by (metis Un_iff add_diff_cancel_left' length_replicate order_trans set_append)
   moreover have "length (balance ts ms) = m" using mpos mrep balance_length by simp
   ultimately have  "m * (T - hd vs) \<le> sum_list (map sum_mset (balance ts ms))"
@@ -281,27 +315,43 @@ text \<open>Note that 'balance' schedules jobs starting from the end of the job 
 lemma makespan_ge_2t: (* Lemma 11.4 in KT*)
   fixes ms::"(nat multiset) list"
   assumes
-    tpos: "\<forall>t. t \<in> set ts \<longrightarrow> t > 0" and
+    ts_def:  "ts = us@vs \<and> length vs > 0 \<and> (\<forall> t. t \<in> set ts \<longrightarrow> t > 0)" and
     msch: "schedule ts ms" and
-    ms_le_ts: "ts = qs@rs \<and> length qs > 0 \<and> length rs = length ms" and
+    ms_le_ts: "vs = qs@rs \<and> length qs > 0 \<and> length rs = length ms" and
     ts_sorted: "sorted ts" and
     opt_greedy: "\<forall>m. m \<in> set ms \<longrightarrow> (\<exists>u. u \<in> set rs \<and> u \<in># m)"
   shows "t \<in> set qs \<longrightarrow> makespan ms \<ge> 2 * t"
 proof -
   have "t \<in> set qs \<longrightarrow> (\<exists>m. m \<in> set ms \<and> t \<in># m)"
-    using schedule_def msch  ms_le_ts
-    by (metis (no_types, lifting) Un_iff in_Union_mset_iff set_append set_mset_mset)
+    using schedule_def msch ms_le_ts
+     by (metis (no_types, hide_lams) Un_iff in_Union_mset_iff set_append set_mset_mset ts_def)
   then obtain m where t_in_m: "t \<in> set qs \<longrightarrow> (m \<in> set ms \<and> t \<in># m)" by auto
   obtain u where u_in_m: "m \<in> set ms \<longrightarrow> u \<in> set rs \<and> u \<in># m" using opt_greedy by auto
-  have "t \<noteq> u" sorry
-  hence "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> mset [t, u] \<subseteq># m" by (meson pair_in_set t_in_m u_in_m)
-  hence "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> sum_mset (mset [t, u])\<le> sum_mset m" 
-    using sum_mset_subset_eq by fastforce
+  have "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> t + u \<le> sum_mset m"
+  proof (cases "t \<noteq> u")
+    case True
+    hence "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> mset [t, u] \<subseteq># m" by (meson pair_in_mset t_in_m u_in_m)
+    thus ?thesis using sum_mset_subset_eq by fastforce
+  next
+    case False
+    have "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> count m t \<ge> 2" sorry
+    thus ?thesis using False sum_mset_replicate
+      by (metis count_le_replicate_mset_subset_eq mult_2)
+  qed
   moreover have "t \<in> set qs \<and> m \<in> set ms \<longrightarrow> t \<le> u"
-    using ts_sorted ms_le_ts sorted_append u_in_m by auto
+    using ts_def ts_sorted ms_le_ts sorted_append u_in_m by blast
   moreover have "m \<in> set ms \<longrightarrow> makespan ms \<ge> sum_mset m" using makespan_def by simp
   ultimately show ?thesis using ms_le_ts t_in_m u_in_m by auto
 qed
+
+text \<open>As before, we avoid reasoning about array indices by defining the structure of 'ts'.
+      In addition to 'j' (the index of the last job contributing to the makespan),
+      the textbook proof of the stronger Theorem 11.5 also uses the index 'm',
+      which is equal to the number of machines available. We encode it by defining 'vs'
+      as a concatenation of lists 'qs' (jobs m+1..j) and 'rs' (jobs 1..m).
+
+      This means that 'j' is implicitly assumed to be greater than 'm'.
+      This assumption is present in the second paragraph of textbook proof.\<close>
 
 theorem sorted_balance_optimal: (* Theorem 11.5 in KT *)
   assumes
@@ -313,12 +363,12 @@ theorem sorted_balance_optimal: (* Theorem 11.5 in KT *)
     T_def:   "T = makespan (balance ts ms)" and
     j_def:   "T = hd vs + premakespan (balance (tl vs) ms)" and
     (* Additional assumptions allow us to prove a tighter upper bound: *)
-    ms_le_ts: "ts = qs@rs \<and> length qs > 0 \<and> length rs = m" and
+    ms_le_ts: "vs = qs@rs \<and> length qs > 0 \<and> length rs = m" and
     ts_sorted: "sorted ts" and
     opt_greedy: "\<forall>m. m \<in> set mos \<longrightarrow> (\<exists>u. u \<in> set rs \<and> u \<in># m)"
   shows "2 * T \<le> 3 * Topt"
 proof -
-  have "hd vs \<in> set qs" using mos_def ms_le_ts sorry
+  have "hd vs \<in> set qs" using ms_le_ts by simp
   moreover have "2 * T - 2 * hd vs \<le> 2 * Topt" using balance_optimal_common assms
     by (metis nat_mult_le_cancel_disj right_diff_distrib')
   ultimately have "2 * T - 2 * hd vs + 2 * hd vs \<le> 3 * Topt" using makespan_ge_2t assms
